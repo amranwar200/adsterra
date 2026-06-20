@@ -1,9 +1,14 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { z } from "zod";
+
+const adsterraSchema = z.object({
+  token: z.string().min(1, "Token is required"),
+  action: z.string().optional(),
+});
 
 export async function POST(request: Request) {
   try {
-    // 1. التحقق من هوية المستخدم
     const supabase = await createClient();
     const {
       data: { user },
@@ -12,50 +17,77 @@ export async function POST(request: Request) {
 
     if (authError || !user) {
       return NextResponse.json(
-        { error: "غير مصرح - يرجى تسجيل الدخول" },
+        { error: "Unauthorized - Please login" },
         { status: 401 },
       );
     }
 
-    // 2. قراءة البيانات المرسلة من الواجهة
     const body = await request.json();
+    const result = adsterraSchema.safeParse(body);
 
-    // 3. الاتصال بـ Adsterra API
-    // ملاحظة: هذا مثال، استبدل بالـ endpoint الصحيح من Adsterra
+    if (!result.success) {
+      return NextResponse.json(
+        { error: "Invalid data", details: result.error.flatten().fieldErrors },
+        { status: 400 },
+      );
+    }
+
+    const apiKey = process.env.ADSTERRA_API_KEY;
+    if (!apiKey) {
+      console.error("Adsterra API Key is missing");
+      return NextResponse.json(
+        { error: "Server configuration incomplete" },
+        { status: 500 },
+      );
+    }
+
     const adsterraResponse = await fetch(
-      "https://api.adsterra.com/v2/your-endpoint",
+      "https://api.adsterra.com/v2/validate-token",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.ADSTERRA_API_KEY}`, // مفتاح API من Adsterra
+          Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
-          token: body.token,
+          token: result.data.token,
           user_id: user.id,
-          // أضف أي بيانات أخرى تحتاجها Adsterra
+          action: result.data.action || "validate",
         }),
       },
     );
 
-    // 4. معالجة الاستجابة من Adsterra
+    if (!adsterraResponse.ok) {
+      const errorText = await adsterraResponse.text();
+      console.error("Adsterra API error:", adsterraResponse.status, errorText);
+      return NextResponse.json(
+        { error: "Failed to connect to Adsterra service" },
+        { status: adsterraResponse.status },
+      );
+    }
+
     const data = await adsterraResponse.json();
 
-    // 5. (اختياري) تسجيل الطلب في قاعدة البيانات
-    await supabase.from("api_logs").insert({
-      user_id: user.id,
-      endpoint: "/api/adsterra",
-      request: body,
-      response: data,
-      created_at: new Date().toISOString(),
-    });
+    try {
+      await supabase.from("api_logs").insert({
+        user_id: user.id,
+        endpoint: "/api/adsterra",
+        request: result.data,
+        response: data,
+        created_at: new Date().toISOString(),
+      });
+    } catch (logError) {
+      console.error("Failed to log API call:", logError);
+    }
 
-    // 6. إعادة النتيجة للواجهة
-    return NextResponse.json(data);
+    return NextResponse.json({
+      success: true,
+      data: data,
+    });
   } catch (error) {
     console.error("Adsterra API Error:", error);
     return NextResponse.json(
-      { error: "حدث خطأ في معالجة الطلب" },
+      { error: "Internal server error" },
       { status: 500 },
     );
   }
