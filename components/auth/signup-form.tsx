@@ -1,9 +1,12 @@
 "use client"
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useState } from "react"
+import { LoaderCircle } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
+import { toast } from "sonner"
 
+import { signUp } from "@/actions/auth"
 import { AuthCard } from "@/components/auth/auth-card"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -14,7 +17,7 @@ import {
 } from "@/lib/validations/auth"
 
 export function SignUpForm() {
-  const [feedback, setFeedback] = useState<string | null>(null)
+  const router = useRouter()
   const form = useForm<SignUpFormValues>({
     resolver: zodResolver(signUpSchema),
     mode: "onTouched",
@@ -33,7 +36,37 @@ export function SignUpForm() {
   const hasErrors = isSubmitted && Object.keys(errors).length > 0
 
   async function onSubmit(values: SignUpFormValues) {
-    setFeedback(`${values.fullName.trim()} is ready to sign up.`)
+    const formData = new FormData()
+    formData.set("fullName", values.fullName)
+    formData.set("email", values.email)
+    formData.set("password", values.password)
+    formData.set("confirmPassword", values.confirmPassword)
+
+    try {
+      const result = await signUp(formData)
+
+      if (!result.success) {
+        for (const [field, messages] of Object.entries(result.fieldErrors ?? {})) {
+          const message = messages?.[0]
+
+          if (message) {
+            form.setError(field as keyof SignUpFormValues, {
+              type: "server",
+              message,
+            })
+          }
+        }
+
+        toast.error(result.message)
+        return
+      }
+
+      toast.success(result.message)
+      router.replace(result.redirectTo ?? "/dashboard")
+      router.refresh()
+    } catch {
+      toast.error("Unable to create your account. Please try again.")
+    }
   }
 
   return (
@@ -114,14 +147,15 @@ export function SignUpForm() {
           </p>
         ) : null}
 
-        {feedback ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            {feedback}
-          </p>
-        ) : null}
-
         <Button className="w-full" size="lg" type="submit" disabled={isSubmitting}>
-          Create account
+          {isSubmitting ? (
+            <>
+              <LoaderCircle className="animate-spin" data-icon="inline-start" />
+              Creating account
+            </>
+          ) : (
+            "Create account"
+          )}
         </Button>
       </form>
     </AuthCard>

@@ -34,9 +34,7 @@ export const tokenSchema = z.object({
   token: z
     .string()
     .trim()
-    .min(1, "Token is required")
-    .min(4, "Token must be at least 4 characters")
-    .max(6, "Token must be 6 characters or fewer"),
+    .min(1, "Adsterra publisher token is required"),
 })
 
 export type SignUpFormValues = z.infer<typeof signUpSchema>

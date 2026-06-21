@@ -1,78 +1,121 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
-import { redirect } from "next/navigation";
-import { z } from "zod";
+import type { ActionResult } from "@/lib/action-result";
+import { getSafeRedirect } from "@/lib/auth/redirect";
+import {
+  signInSchema,
+  signUpSchema,
+  type SignInFormValues,
+  type SignUpFormValues,
+} from "@/lib/validations/auth";
 
-const signUpSchema = z
-  .object({
-    email: z.string().email("Invalid email address"),
-    password: z.string().min(6, "Password must be at least 6 characters"),
-    confirmPassword: z
-      .string()
-      .min(6, "Password must be at least 6 characters"),
-  })
-  .refine((data) => data.password === data.confirmPassword, {
-    message: "Passwords do not match",
-    path: ["confirmPassword"],
-  });
+type SignUpField = keyof SignUpFormValues;
+type SignInField = keyof SignInFormValues;
 
-export async function signUp(formData: FormData) {
+export async function signUp(
+  formData: FormData
+): Promise<ActionResult<SignUpField>> {
   const supabase = await createClient();
 
-  const email = formData.get("email") as string;
-  const password = formData.get("password") as string;
-  const confirmPassword = formData.get("confirmPassword") as string;
-
-  const result = signUpSchema.safeParse({ email, password, confirmPassword });
+  const result = signUpSchema.safeParse({
+    fullName: formData.get("fullName"),
+    email: formData.get("email"),
+    password: formData.get("password"),
+    confirmPassword: formData.get("confirmPassword"),
+  });
 
   if (!result.success) {
-    const errors = result.error.flatten().fieldErrors;
     return {
-      error:
-        errors.confirmPassword?.[0] ||
-        errors.email?.[0] ||
-        errors.password?.[0] ||
-        "Invalid data",
+      success: false,
+      message: "Please fix the highlighted fields.",
+      fieldErrors: result.error.flatten().fieldErrors,
     };
   }
 
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
+    email: result.data.email,
+    password: result.data.password,
+    options: {
+      data: {
+        full_name: result.data.fullName,
+      },
+    },
+  });
+
+  if (error) {
+    return {
+      success: false,
+      message: error.message || "Unable to create your account.",
+    };
+  }
+
+  if (!data.session) {
+    return {
+      success: true,
+      message: "Check your email to confirm your account, then sign in.",
+      redirectTo: "/signin",
+    };
+  }
+
+  return {
+    success: true,
+    message: "Your account has been created.",
+    redirectTo: "/dashboard",
+  };
+}
+
+export async function signIn(
+  formData: FormData
+): Promise<ActionResult<SignInField>> {
+  const supabase = await createClient();
+
+  const result = signInSchema.safeParse({
+    email: formData.get("email"),
+    password: formData.get("password"),
+  });
+
+  if (!result.success) {
+    return {
+      success: false,
+      message: "Please fix the highlighted fields.",
+      fieldErrors: result.error.flatten().fieldErrors,
+    };
+  }
+
+  const { error } = await supabase.auth.signInWithPassword({
     email: result.data.email,
     password: result.data.password,
   });
 
   if (error) {
-    return { error: error.message };
+    return {
+      success: false,
+      message: "The email or password is incorrect.",
+    };
   }
 
-  redirect("/dashboard");
+  return {
+    success: true,
+    message: "You are signed in.",
+    redirectTo: getSafeRedirect(formData.get("next")),
+  };
 }
 
-export async function signIn(formData: FormData) {
+export async function signOut(): Promise<ActionResult> {
   const supabase = await createClient();
-
-  const email = formData.get("email") as string;
-  const password = formData.get("password") as string;
-
-  if (!email || !email.includes("@")) {
-    return { error: "Invalid email address" };
-  }
-  if (!password || password.length < 6) {
-    return { error: "Password must be at least 6 characters" };
-  }
-
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await supabase.auth.signOut();
 
   if (error) {
-    return { error: error.message };
+    return {
+      success: false,
+      message: "Unable to sign out. Please try again.",
+    };
   }
 
-  redirect("/dashboard");
-}
-
-export async function signOut() {
-  const supabase = await createClient();
-  await supabase.auth.signOut();
-  redirect("/");
+  return {
+    success: true,
+    message: "You are signed out.",
+    redirectTo: "/signin",
+  };
 }

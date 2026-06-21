@@ -1,9 +1,12 @@
 "use client"
 
 import { zodResolver } from "@hookform/resolvers/zod"
-import { useState } from "react"
+import { LoaderCircle } from "lucide-react"
+import { useRouter } from "next/navigation"
 import { useForm } from "react-hook-form"
+import { toast } from "sonner"
 
+import { signIn } from "@/actions/auth"
 import { AuthCard } from "@/components/auth/auth-card"
 import { Button } from "@/components/ui/button"
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/components/ui/field"
@@ -13,8 +16,12 @@ import {
   type SignInFormValues,
 } from "@/lib/validations/auth"
 
-export function SignInForm() {
-  const [feedback, setFeedback] = useState<string | null>(null)
+type SignInFormProps = {
+  nextPath?: string
+}
+
+export function SignInForm({ nextPath }: SignInFormProps) {
+  const router = useRouter()
   const form = useForm<SignInFormValues>({
     resolver: zodResolver(signInSchema),
     mode: "onTouched",
@@ -31,7 +38,39 @@ export function SignInForm() {
   const hasErrors = isSubmitted && Object.keys(errors).length > 0
 
   async function onSubmit(values: SignInFormValues) {
-    setFeedback(`${values.email.trim()} is ready to sign in.`)
+    const formData = new FormData()
+    formData.set("email", values.email)
+    formData.set("password", values.password)
+
+    if (nextPath) {
+      formData.set("next", nextPath)
+    }
+
+    try {
+      const result = await signIn(formData)
+
+      if (!result.success) {
+        for (const [field, messages] of Object.entries(result.fieldErrors ?? {})) {
+          const message = messages?.[0]
+
+          if (message) {
+            form.setError(field as keyof SignInFormValues, {
+              type: "server",
+              message,
+            })
+          }
+        }
+
+        toast.error(result.message)
+        return
+      }
+
+      toast.success(result.message)
+      router.replace(result.redirectTo ?? "/dashboard")
+      router.refresh()
+    } catch {
+      toast.error("Unable to sign in. Please try again.")
+    }
   }
 
   return (
@@ -81,14 +120,15 @@ export function SignInForm() {
           </p>
         ) : null}
 
-        {feedback ? (
-          <p className="text-sm text-muted-foreground" role="status">
-            {feedback}
-          </p>
-        ) : null}
-
         <Button className="w-full" size="lg" type="submit" disabled={isSubmitting}>
-          Sign in
+          {isSubmitting ? (
+            <>
+              <LoaderCircle className="animate-spin" data-icon="inline-start" />
+              Signing in
+            </>
+          ) : (
+            "Sign in"
+          )}
         </Button>
       </form>
     </AuthCard>
